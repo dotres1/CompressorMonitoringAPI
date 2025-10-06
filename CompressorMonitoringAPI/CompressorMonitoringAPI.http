@@ -1,0 +1,6 @@
+@CompressorMonitoringAPI_HostAddress = http://localhost:5244
+
+GET {{CompressorMonitoringAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
