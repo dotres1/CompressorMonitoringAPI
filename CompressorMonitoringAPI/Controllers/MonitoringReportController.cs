@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Collections.Generic;
 using System.Linq;
+using CompressorMonitoringAPI.Models;
 
 namespace CompressorMonitoringAPI.Controllers
 {
@@ -8,35 +9,8 @@ namespace CompressorMonitoringAPI.Controllers
     [Route("api/[controller]")]
     public class MonitoringReportController : ControllerBase
     {
-        private static List<MonitoringReport> _reports = new List<MonitoringReport>
-        {
-            new MonitoringReport 
-            { 
-                Id = 1, 
-                EquipmentId = 1, 
-                ReportDate = DateTime.Now, 
-                OperatorName = "Иванов", 
-                Parameters = new Dictionary<string, double> 
-                { 
-                    { "Давление", 10.5 }, 
-                    { "Температура", 75.2 } 
-                }, 
-                Conclusions = "Норма" 
-            },
-            new MonitoringReport 
-            { 
-                Id = 2, 
-                EquipmentId = 2, 
-                ReportDate = DateTime.Now, 
-                OperatorName = "Петров", 
-                Parameters = new Dictionary<string, double> 
-                { 
-                    { "Давление", 12.8 }, 
-                    { "Температура", 80.1 } 
-                }, 
-                Conclusions = "Повышенная температура" 
-            }
-        };
+        private static List<MonitoringReport> _reports = DataContext.Reports;
+        private static List<Equipment> _equipment = DataContext.Equipment;
 
         // GET: api/monitoringreport
         [HttpGet]
@@ -79,8 +53,10 @@ namespace CompressorMonitoringAPI.Controllers
             report.EquipmentId = updatedReport.EquipmentId;
             report.ReportDate = updatedReport.ReportDate;
             report.OperatorName = updatedReport.OperatorName;
+            report.Shift = updatedReport.Shift;
             report.Parameters = updatedReport.Parameters;
             report.Conclusions = updatedReport.Conclusions;
+            report.ReportType = updatedReport.ReportType;
 
             return NoContent();
         }
@@ -111,13 +87,50 @@ namespace CompressorMonitoringAPI.Controllers
         }
 
         [HttpGet("operator/{operatorName}")]
-        public ActionResult<IEnumerable<MonitoringReport>> GetReportsByOperator(string operatorName)
+        public ActionResult<IEnumerable<object>> GetReportsByOperator(string operatorName)
         {
             var result = _reports
                 .Where(r => r.OperatorName.Contains(operatorName, StringComparison.OrdinalIgnoreCase))
                 .Select(r => new { r.Id, r.ReportDate, r.Conclusions })
                 .ToList();
             return Ok(result);
+        }
+
+        // Новые методы для объединения данных
+        [HttpGet("with-equipment")]
+        public ActionResult<IEnumerable<object>> GetReportsWithEquipment()
+        {
+            var result = _reports
+                .Select(r => new
+                {
+                    Report = r,
+                    Equipment = _equipment.FirstOrDefault(e => e.Id == r.EquipmentId)
+                })
+                .Where(x => x.Equipment != null)
+                .Select(x => new
+                {
+                    x.Report.Id,
+                    x.Report.ReportDate,
+                    x.Report.OperatorName,
+                    x.Report.Shift,
+                    EquipmentName = x.Equipment.Name,
+                    EquipmentType = x.Equipment.Type,
+                    EquipmentLocation = x.Equipment.Location,
+                    HealthStatus = x.Report.GetEquipmentHealthStatus(),
+                    HealthScore = x.Report.CalculateHealthScore(),
+                    x.Report.Parameters,
+                    x.Report.Conclusions
+                })
+                .OrderByDescending(x => x.ReportDate)
+                .ToList();
+            
+            return Ok(result);
+        }
+
+        // Статический метод для доступа из ReportsController
+        public static List<MonitoringReport> GetReportsList()
+        {
+            return _reports;
         }
     }
 }
