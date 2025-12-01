@@ -1,50 +1,41 @@
-using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.ComponentModel.DataAnnotations;
 
 namespace CompressorMonitoringAPI.Models
 {
     public class Equipment
     {
+        [Key]
         public int Id { get; set; }
+        
+        [Required]
+        [MaxLength(100)]
         public string Name { get; set; } = string.Empty;
+        
+        [Required]
+        [MaxLength(50)]
         public string Type { get; set; } = string.Empty;
+        
+        [Required]
+        [MaxLength(100)]
         public string Location { get; set; } = string.Empty;
+        
+        [MaxLength(50)]
         public string ProcessStage { get; set; } = "Сжатие";
+        
         public DateTime InstallationDate { get; set; }
+        
+        [MaxLength(20)]
         public string Status { get; set; } = "Operational";
-        public Dictionary<string, string> Specifications { get; set; } = new();
+        
+        // Навигационные свойства
+        public virtual ICollection<EquipmentSpecification> Specifications { get; set; } = new List<EquipmentSpecification>();
+        public virtual ICollection<MonitoringReport> Reports { get; set; } = new List<MonitoringReport>();
         
         // Бизнес-логика
-        public bool RequiresMaintenance()
-        {
-            return Status == "Warning" || Status == "Critical";
-        }
-        
-        public int GetEquipmentAgeInYears()
-        {
-            return DateTime.Now.Year - InstallationDate.Year;
-        }
-        
-        // Новая бизнес-логика для реального оборудования
-        public bool IsCriticalForProcess()
-        {
-            return ProcessStage == "Сжатие" || ProcessStage == "Бустерирование";
-        }
-        
-        public string GetRecommendedInspectionInterval()
-        {
-            return IsCriticalForProcess() ? "2 часа" : "8 часов";
-        }
-        
-        // Определяем тип оборудования для специфических проверок
-        public string GetEquipmentCategory()
-        {
-            if (Type.Contains("поршнев", StringComparison.OrdinalIgnoreCase)) return "Поршневой";
-            if (Type.Contains("винтов", StringComparison.OrdinalIgnoreCase)) return "Винтовой";
-            if (Type.Contains("турбо", StringComparison.OrdinalIgnoreCase)) return "Турбокомпрессор";
-            if (Type.Contains("бустер", StringComparison.OrdinalIgnoreCase)) return "Бустерный";
-            return "Другое";
-        }
+        public bool RequiresMaintenance() => Status == "Warning" || Status == "Critical";
+        public int GetEquipmentAgeInYears() => DateTime.Now.Year - InstallationDate.Year;
+        public bool IsCriticalForProcess() => ProcessStage == "Сжатие" || ProcessStage == "Бустерирование";
+        public string GetRecommendedInspectionInterval() => IsCriticalForProcess() ? "2 часа" : "8 часов";
     }
 }

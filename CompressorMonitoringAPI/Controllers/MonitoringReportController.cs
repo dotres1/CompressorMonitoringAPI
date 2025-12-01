@@ -1,136 +1,230 @@
 using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
-using System.Linq;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using CompressorMonitoringAPI.Data;
 using CompressorMonitoringAPI.Models;
 
 namespace CompressorMonitoringAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class MonitoringReportController : ControllerBase
     {
-        private static List<MonitoringReport> _reports = DataContext.Reports;
-        private static List<Equipment> _equipment = DataContext.Equipment;
+        private readonly AppDbContext _context;
+
+        public MonitoringReportController(AppDbContext context)
+        {
+            _context = context;
+        }
 
         // GET: api/monitoringreport
         [HttpGet]
-        public ActionResult<IEnumerable<MonitoringReport>> Get()
+        public async Task<ActionResult<IEnumerable<MonitoringReport>>> Get()
         {
-            return _reports;
+            return await _context.MonitoringReports
+                .Include(r => r.Parameters)
+                .Include(r => r.Equipment)
+                .OrderByDescending(r => r.ReportDate)
+                .ToListAsync();
         }
 
         // GET api/monitoringreport/5
         [HttpGet("{id}")]
-        public ActionResult<MonitoringReport> Get(int id)
+        public async Task<ActionResult<MonitoringReport>> Get(int id)
         {
-            var report = _reports.FirstOrDefault(r => r.Id == id);
+            var report = await _context.MonitoringReports
+                .Include(r => r.Parameters)
+                .Include(r => r.Equipment)
+                .FirstOrDefaultAsync(r => r.Id == id);
+
             if (report == null)
             {
                 return NotFound();
             }
+
             return report;
         }
 
         // POST api/monitoringreport
         [HttpPost]
-        public ActionResult<MonitoringReport> Post([FromBody] MonitoringReport newReport)
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<MonitoringReport>> Post([FromBody] MonitoringReport newReport)
         {
-            newReport.Id = _reports.Max(r => r.Id) + 1;
-            _reports.Add(newReport);
+            // Проверяем существование оборудования
+            var equipment = await _context.Equipment.FindAsync(newReport.EquipmentId);
+            if (equipment == null)
+            {
+                return BadRequest(new { message = "Оборудование не найдено" });
+            }
+
+            // Рассчитываем HealthScore на основе параметров
+            if (newReport.Parameters != null && newReport.Parameters.Any())
+            {
+                var maxScore = newReport.Parameters.Count() * 100;
+                var currentScore = newReport.Parameters.Sum(p => 
+                {
+                    if (p.Value <= p.WarningLimit) return 100;
+                    if (p.Value > p.CriticalLimit) return 0;
+                    
+                    var severity = (p.Value - p.WarningLimit) / (p.CriticalLimit - p.WarningLimit);
+                    return Math.Max(0, 100 - (severity * 100));
+                });
+                
+                newReport.HealthScore = Math.Round(currentScore / maxScore * 100, 1);
+                
+                // Определяем HealthStatus
+                var criticalParams = newReport.Parameters.Count(p => p.Value > p.CriticalLimit);
+                var warningParams = newReport.Parameters.Count(p => p.Value > p.WarningLimit);
+                
+                newReport.HealthStatus = criticalParams > 0 ? "Критическое" :
+                                       warningParams > 0 ? "Требует внимания" : "Нормальное";
+            }
+
+            _context.MonitoringReports.Add(newReport);
+            await _context.SaveChangesAsync();
+
             return CreatedAtAction(nameof(Get), new { id = newReport.Id }, newReport);
         }
 
         // PUT api/monitoringreport/5
         [HttpPut("{id}")]
-        public IActionResult Put(int id, [FromBody] MonitoringReport updatedReport)
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> Put(int id, [FromBody] MonitoringReport updatedReport)
         {
-            var report = _reports.FirstOrDefault(r => r.Id == id);
-            if (report == null)
+            if (id != updatedReport.Id)
             {
-                return NotFound();
+                return BadRequest();
             }
 
-            report.EquipmentId = updatedReport.EquipmentId;
-            report.ReportDate = updatedReport.ReportDate;
-            report.OperatorName = updatedReport.OperatorName;
-            report.Shift = updatedReport.Shift;
-            report.Parameters = updatedReport.Parameters;
-            report.Conclusions = updatedReport.Conclusions;
-            report.ReportType = updatedReport.ReportType;
+            _context.Entry(updatedReport).State = EntityState.Modified;
+
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                if (!ReportExists(id))
+                {
+                    return NotFound();
+                }
+                else
+                {
+                    throw;
+                }
+            }
 
             return NoContent();
         }
 
         // DELETE api/monitoringreport/5
         [HttpDelete("{id}")]
-        public IActionResult Delete(int id)
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> Delete(int id)
         {
-            var report = _reports.FirstOrDefault(r => r.Id == id);
+            var report = await _context.MonitoringReports.FindAsync(id);
             if (report == null)
             {
                 return NotFound();
             }
 
-            _reports.Remove(report);
+            _context.MonitoringReports.Remove(report);
+            await _context.SaveChangesAsync();
+
             return NoContent();
         }
         
         // Специальные LINQ-запросы
         [HttpGet("critical")]
-        public ActionResult<IEnumerable<MonitoringReport>> GetCriticalReports()
+        public async Task<ActionResult<IEnumerable<MonitoringReport>>> GetCriticalReports()
         {
-            var result = _reports
-                .Where(r => r.HasCriticalParameters())
-                .Select(r => r)
-                .ToList();
+            var result = await _context.MonitoringReports
+                .Include(r => r.Parameters)
+                .Include(r => r.Equipment)
+                .Where(r => r.HealthStatus == "Критическое")
+                .OrderByDescending(r => r.ReportDate)
+                .ToListAsync();
+            
             return Ok(result);
         }
 
         [HttpGet("operator/{operatorName}")]
-        public ActionResult<IEnumerable<object>> GetReportsByOperator(string operatorName)
+        public async Task<ActionResult<IEnumerable<object>>> GetReportsByOperator(string operatorName)
         {
-            var result = _reports
+            var result = await _context.MonitoringReports
                 .Where(r => r.OperatorName.Contains(operatorName, StringComparison.OrdinalIgnoreCase))
-                .Select(r => new { r.Id, r.ReportDate, r.Conclusions })
-                .ToList();
+                .Select(r => new 
+                { 
+                    r.Id, 
+                    r.ReportDate, 
+                    r.OperatorName,
+                    EquipmentName = r.Equipment.Name,
+                    r.HealthStatus,
+                    r.Conclusions 
+                })
+                .OrderByDescending(r => r.ReportDate)
+                .ToListAsync();
+            
             return Ok(result);
         }
 
         // Новые методы для объединения данных
         [HttpGet("with-equipment")]
-        public ActionResult<IEnumerable<object>> GetReportsWithEquipment()
+        public async Task<ActionResult<IEnumerable<object>>> GetReportsWithEquipment()
         {
-            var result = _reports
+            var result = await _context.MonitoringReports
+                .Include(r => r.Parameters)
+                .Include(r => r.Equipment)
                 .Select(r => new
                 {
-                    Report = r,
-                    Equipment = _equipment.FirstOrDefault(e => e.Id == r.EquipmentId)
+                    Report = new
+                    {
+                        r.Id,
+                        r.ReportDate,
+                        r.OperatorName,
+                        r.Shift,
+                        r.HealthScore,
+                        r.HealthStatus,
+                        r.Conclusions
+                    },
+                    Equipment = new
+                    {
+                        r.Equipment.Id,
+                        r.Equipment.Name,
+                        r.Equipment.Type,
+                        r.Equipment.Location
+                    },
+                    Parameters = r.Parameters.Select(p => new
+                    {
+                        p.Name,
+                        p.Value,
+                        p.Unit,
+                        p.IsWarning,
+                        p.IsCritical
+                    })
                 })
-                .Where(x => x.Equipment != null)
-                .Select(x => new
-                {
-                    x.Report.Id,
-                    x.Report.ReportDate,
-                    x.Report.OperatorName,
-                    x.Report.Shift,
-                    EquipmentName = x.Equipment.Name,
-                    EquipmentType = x.Equipment.Type,
-                    EquipmentLocation = x.Equipment.Location,
-                    HealthStatus = x.Report.GetEquipmentHealthStatus(),
-                    HealthScore = x.Report.CalculateHealthScore(),
-                    x.Report.Parameters,
-                    x.Report.Conclusions
-                })
-                .OrderByDescending(x => x.ReportDate)
-                .ToList();
+                .OrderByDescending(x => x.Report.ReportDate)
+                .ToListAsync();
             
             return Ok(result);
         }
 
-        // Статический метод для доступа из ReportsController
-        public static List<MonitoringReport> GetReportsList()
+        [HttpGet("equipment/{equipmentId}")]
+        public async Task<ActionResult<IEnumerable<MonitoringReport>>> GetReportsByEquipment(int equipmentId)
         {
-            return _reports;
+            var reports = await _context.MonitoringReports
+                .Include(r => r.Parameters)
+                .Where(r => r.EquipmentId == equipmentId)
+                .OrderByDescending(r => r.ReportDate)
+                .ToListAsync();
+            
+            return Ok(reports);
+        }
+
+        private bool ReportExists(int id)
+        {
+            return _context.MonitoringReports.Any(e => e.Id == id);
         }
     }
 }
