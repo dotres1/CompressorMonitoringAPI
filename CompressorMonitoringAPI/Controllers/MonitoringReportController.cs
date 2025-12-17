@@ -23,10 +23,10 @@ namespace CompressorMonitoringAPI.Controllers
         public async Task<ActionResult<IEnumerable<MonitoringReport>>> Get()
         {
             return await _context.MonitoringReports
-                .Include(r => r.Parameters)
-                .Include(r => r.Equipment)
-                .OrderByDescending(r => r.ReportDate)
-                .ToListAsync();
+                //.Include(r => r.Parameters)
+               // .Include(r => r.Equipment)
+               // .OrderByDescending(r => r.ReportDate)
+                  .ToListAsync();
         }
 
         // GET api/monitoringreport/5
@@ -46,45 +46,36 @@ namespace CompressorMonitoringAPI.Controllers
             return report;
         }
 
-        // POST api/monitoringreport
         [HttpPost]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<MonitoringReport>> Post([FromBody] MonitoringReport newReport)
+        public async Task<ActionResult<object>> Post([FromBody] SimpleReportDto dto)
         {
-            // Проверяем существование оборудования
-            var equipment = await _context.Equipment.FindAsync(newReport.EquipmentId);
-            if (equipment == null)
+            var report = new MonitoringReport
             {
-                return BadRequest(new { message = "Оборудование не найдено" });
-            }
-
-            // Рассчитываем HealthScore на основе параметров
-            if (newReport.Parameters != null && newReport.Parameters.Any())
-            {
-                var maxScore = newReport.Parameters.Count() * 100;
-                var currentScore = newReport.Parameters.Sum(p => 
-                {
-                    if (p.Value <= p.WarningLimit) return 100;
-                    if (p.Value > p.CriticalLimit) return 0;
-                    
-                    var severity = (p.Value - p.WarningLimit) / (p.CriticalLimit - p.WarningLimit);
-                    return Math.Max(0, 100 - (severity * 100));
-                });
-                
-                newReport.HealthScore = Math.Round(currentScore / maxScore * 100, 1);
-                
-                // Определяем HealthStatus
-                var criticalParams = newReport.Parameters.Count(p => p.Value > p.CriticalLimit);
-                var warningParams = newReport.Parameters.Count(p => p.Value > p.WarningLimit);
-                
-                newReport.HealthStatus = criticalParams > 0 ? "Критическое" :
-                                       warningParams > 0 ? "Требует внимания" : "Нормальное";
-            }
-
-            _context.MonitoringReports.Add(newReport);
+                EquipmentId = dto.EquipmentId,
+                OperatorName = dto.OperatorName,
+                Shift = dto.Shift,
+                ReportType = dto.ReportType,
+                Conclusions = dto.Conclusions,
+                HealthScore = dto.HealthScore,
+                HealthStatus = dto.HealthStatus
+            };
+    
+            _context.MonitoringReports.Add(report);
             await _context.SaveChangesAsync();
+    
+            return Ok(new { id = report.Id });
+        }
 
-            return CreatedAtAction(nameof(Get), new { id = newReport.Id }, newReport);
+        public class SimpleReportDto
+        {
+            public int EquipmentId { get; set; }
+            public string OperatorName { get; set; } = string.Empty;
+            public string Shift { get; set; } = "Дневная";
+            public string ReportType { get; set; } = "Оперативный";
+            public string Conclusions { get; set; } = string.Empty;
+            public double HealthScore { get; set; }
+            public string HealthStatus { get; set; } = "Нормальное";
         }
 
         // PUT api/monitoringreport/5
@@ -153,7 +144,8 @@ namespace CompressorMonitoringAPI.Controllers
         public async Task<ActionResult<IEnumerable<object>>> GetReportsByOperator(string operatorName)
         {
             var result = await _context.MonitoringReports
-                .Where(r => r.OperatorName.Contains(operatorName, StringComparison.OrdinalIgnoreCase))
+                .Include(r => r.Equipment)
+                .Where(r => r.OperatorName == operatorName)
                 .Select(r => new 
                 { 
                     r.Id, 
@@ -169,7 +161,7 @@ namespace CompressorMonitoringAPI.Controllers
             return Ok(result);
         }
 
-        // Новые методы для объединения данных
+        // методы для объединения данных
         [HttpGet("with-equipment")]
         public async Task<ActionResult<IEnumerable<object>>> GetReportsWithEquipment()
         {

@@ -130,40 +130,61 @@ namespace CompressorMonitoringAPI.Controllers
         [HttpGet("shift/{shiftName}")]
         public async Task<ActionResult> GetShiftReport(string shiftName)
         {
-            var today = DateTime.Today;
-            
+            DateTime startDate, endDate;
+    
+            if (shiftName == "Ночная")
+            {
+                startDate = DateTime.Today.AddDays(-1).AddHours(22);
+                endDate = DateTime.Today.AddHours(6);
+            }
+            else if (shiftName == "Дневная")
+            {
+                startDate = DateTime.Today.AddHours(8);
+                endDate = DateTime.Today.AddHours(16);
+            }
+            else if (shiftName == "Вечерняя")
+            {
+                startDate = DateTime.Today.AddHours(16);
+                endDate = DateTime.Today.AddHours(22);
+            }
+            else
+            {
+                startDate = DateTime.Today;
+                endDate = DateTime.Today.AddDays(1);
+            }
+    
             var shiftReports = await _context.MonitoringReports
                 .Include(r => r.Parameters)
                 .Include(r => r.Equipment)
-                .Where(r => r.Shift == shiftName && r.ReportDate.Date == today)
+                .Where(r => r.Shift == shiftName && 
+                            r.ReportDate >= startDate && 
+                            r.ReportDate < endDate)
                 .ToListAsync();
-
-            var equipmentIds = shiftReports.Select(r => r.EquipmentId).Distinct();
-            
-            var equipmentWithReports = await _context.Equipment
-                .Where(e => equipmentIds.Contains(e.Id))
-                .Select(e => new
+    
+            var equipmentGroups = shiftReports
+                .GroupBy(r => r.Equipment)
+                .Select(g => new
                 {
-                    Equipment = e,
-                    Reports = shiftReports.Where(r => r.EquipmentId == e.Id).ToList()
+                    Equipment = g.Key,
+                    Reports = g.OrderByDescending(r => r.ReportDate).ToList()
                 })
-                .ToListAsync();
-
+                .ToList();
+    
             return Ok(new
             {
                 Shift = shiftName,
-                Date = today,
+                Date = DateTime.Today.ToString("yyyy-MM-dd"),
                 ReportsCount = shiftReports.Count,
-                EquipmentMonitored = equipmentWithReports.Count,
+                EquipmentMonitored = equipmentGroups.Count,
                 CriticalEvents = shiftReports.Count(r => r.HealthStatus == "Критическое"),
-                Details = equipmentWithReports.Select(x => new
+                Details = equipmentGroups.Select(x => new
                 {
                     x.Equipment.Name,
                     x.Equipment.Location,
                     ReportsCount = x.Reports.Count,
-                    LastReportTime = x.Reports.OrderByDescending(r => r.ReportDate).FirstOrDefault()?.ReportDate,
-                    HealthStatus = x.Reports.OrderByDescending(r => r.ReportDate).FirstOrDefault()?.HealthStatus,
-                    HealthScore = x.Reports.OrderByDescending(r => r.ReportDate).FirstOrDefault()?.HealthScore
+                    LastReportTime = x.Reports.FirstOrDefault()?.ReportDate,
+                    HealthStatus = x.Reports.FirstOrDefault()?.HealthStatus,
+                    HealthScore = x.Reports.FirstOrDefault()?.HealthScore
                 })
             });
         }

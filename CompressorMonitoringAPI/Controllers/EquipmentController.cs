@@ -28,7 +28,7 @@ namespace CompressorMonitoringAPI.Controllers
                 .ToListAsync();
         }
 
-        // GET api/equipment/5
+        // GET api/equipment/id
         [HttpGet("{id}")]
         public async Task<ActionResult<Equipment>> Get(int id)
         {
@@ -104,13 +104,12 @@ namespace CompressorMonitoringAPI.Controllers
 
             return NoContent();
         }
-
-        // Специальные LINQ-запросы
+        
         [HttpGet("status/{status}")]
         public async Task<ActionResult<IEnumerable<Equipment>>> GetByStatus(string status)
         {
             var result = await _context.Equipment
-                .Where(e => e.Status.Equals(status, StringComparison.OrdinalIgnoreCase))
+                .Where(e => e.Status == status)
                 .Include(e => e.Specifications)
                 .ToListAsync();
             
@@ -135,7 +134,7 @@ namespace CompressorMonitoringAPI.Controllers
             return Ok(result);
         }
 
-        // Новые методы для объединения данных
+        // методы для объединения данных
         [HttpGet("with-reports")]
         public async Task<ActionResult<IEnumerable<object>>> GetEquipmentWithReports()
         {
